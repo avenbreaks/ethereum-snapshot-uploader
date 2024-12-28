@@ -1,0 +1,75 @@
+name: Ethereum Blockchain Snapshot and Upload
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Go-Ethereum
+      run: |
+        # Install Go-Ethereum (geth)
+        sudo apt update
+        sudo apt install -y software-properties-common
+        sudo add-apt-repository ppa:ethereum/ethereum
+        sudo apt update
+        sudo apt install -y geth
+
+    - name: Setup S3cmd
+      run: |
+        # Install s3cmd
+        sudo apt-get install -y s3cmd
+        # Configure s3cmd with DigitalOcean Spaces
+        echo "[default]" > ~/.s3cfg
+        echo "access_key = ${{ secrets.DO_ACCESS_KEY }}" >> ~/.s3cfg
+        echo "secret_key = ${{ secrets.DO_SECRET_KEY }}" >> ~/.s3cfg
+        echo "host_base = sgp1.digitaloceanspaces.com" >> ~/.s3cfg
+        echo "host_bucket = %(bucket)s.sgp1.digitaloceanspaces.com" >> ~/.s3cfg
+        echo "use_https = True" >> ~/.s3cfg
+        echo "signature_v2 = False" >> ~/.s3cfg
+
+    - name: Create Ethereum Database & Init Genesis File
+      run: |
+        # Set up data directory and genesis file
+        mkdir -p $HOME/eth-datadir
+        cd $HOME/eth-datadir
+        geth init /path/to/genesis.json
+
+    - name: Start Blockchain Node
+      run: |
+        # Start geth with the specified data directory
+        geth --datadir $HOME/eth-datadir --networkid 1234 --http --http.addr "0.0.0.0" --http.api "eth,web3,personal,net,miner" --allow-insecure-unlock --mine --miner.threads 1 --unlock "0xYourAccountAddress" --password /path/to/password.txt &
+
+    - name: Add Peers to Node
+      run: |
+        # Add peers to the node manually
+        geth attach http://localhost:8545
+        admin.addPeers("enode://<peer-enode-id>")
+
+    - name: Wait for Blockchain Sync
+      run: |
+        # Wait for sync to finish (you can adjust the block number or time)
+        sleep 300 # Sleep for 5 minutes; Adjust as needed
+
+    - name: Export Ethereum Snapshot
+      run: |
+        # Export the blockchain data as a snapshot
+        geth export --datadir $HOME/eth-datadir mainnet-database.tar.gz 0 9999999999
+
+    - name: Upload Snapshot to DigitalOcean Spaces
+      run: |
+        # Upload snapshot to DigitalOcean Spaces using s3cmd
+        s3cmd put mainnet-database.tar.gz s3://your-bucket-name/snapshots/mainnet-database.tar.gz
+
+    - name: Clean up
+      run: |
+        # Clean up by removing the snapshot
+        rm -rf $HOME/eth-datadir
+        rm -f mainnet-database.tar.gz
